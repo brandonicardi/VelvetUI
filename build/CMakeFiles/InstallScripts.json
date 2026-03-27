@@ -1,9 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"D:/Proyectos/VelvetUI/build/cmake_install.cmake",
-		"D:/Proyectos/VelvetUI/build/src/payload/cmake_install.cmake",
-		"D:/Proyectos/VelvetUI/build/src/injector/cmake_install.cmake"
-	],
-	"Parallel" : false
-}

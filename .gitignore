@@ -416,3 +416,13 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# VelvetUI
+build/
+DebugView/
+DebugView.zip
+*.dll
+*.exe
+*.pdb
+*.obj
+*.lib
