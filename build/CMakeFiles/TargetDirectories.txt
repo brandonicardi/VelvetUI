@@ -1,0 +1,6 @@
+D:/Proyectos/VelvetUI/build/CMakeFiles/ALL_BUILD.dir
+D:/Proyectos/VelvetUI/build/CMakeFiles/ZERO_CHECK.dir
+D:/Proyectos/VelvetUI/build/src/payload/CMakeFiles/VelvetPayload.dir
+D:/Proyectos/VelvetUI/build/src/payload/CMakeFiles/ALL_BUILD.dir
+D:/Proyectos/VelvetUI/build/src/injector/CMakeFiles/VelvetInjector.dir
+D:/Proyectos/VelvetUI/build/src/injector/CMakeFiles/ALL_BUILD.dir

@@ -1,0 +1,24 @@
+{
+    "version": 1,
+    "taskbar": {
+        "height": 48,
+        "marginLeft": 250,
+        "marginRight": 250,
+        "marginTop": 0,
+        "marginBottom": 5,
+        "cornerRadius": 15,
+        "background": {
+            "type": "acrylic",
+            "tintColor": "#202020",
+            "tintOpacity": 0.6
+        },
+        "border": {
+            "thickness": 1,
+            "color": "#20FFFFFF"
+        }
+    },
+    "behavior": {
+        "fillOnMaximize": true,
+        "hideOriginalBackground": true
+    }
+}
