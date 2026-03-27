@@ -1,0 +1,13 @@
+; ============================================================
+; VelvetUI - Module Definition File
+;
+; Ensures DllGetClassObject and DllCanUnloadNow are exported
+; with their exact names. InitializeXamlDiagnosticsEx calls
+; GetProcAddress for these, so name mangling would break it.
+; ============================================================
+
+LIBRARY velvet
+
+EXPORTS
+    DllGetClassObject   PRIVATE
+    DllCanUnloadNow     PRIVATE

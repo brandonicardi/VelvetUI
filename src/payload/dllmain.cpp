@@ -1,13 +1,28 @@
 // ============================================================
 // VelvetUI - payload DLL (velvet.dll)
-// Fase 1: Detectar la barra de tareas desde dentro de explorer
+// Fase 2: Visual Tree Access via XAML Diagnostics
+//
+// Flow:
+//   1. DLL is injected into explorer.exe (by VelvetInjector)
+//   2. DllMain spawns a worker thread
+//   3. Worker thread loads Windows.UI.Xaml.dll and calls
+//      InitializeXamlDiagnosticsEx with our CLSID
+//   4. XAML framework calls DllGetClassObject -> creates VelvetTAP
+//   5. XAML framework calls VelvetTAP::SetSite with IVisualTreeService3
+//   6. VelvetTAP registers VisualTreeWatcher for callbacks
+//   7. OnVisualTreeChange fires for every XAML element add/remove
 // ============================================================
 
 #include <Windows.h>
 #include <string>
-#include <vector>
+#include <combaseapi.h>
 
-// Log via OutputDebugString (visible en DebugView)
+#include "velvet_tap.h"
+#include "simple_factory.h"
+
+// ============================================================
+// Logging - OutputDebugString (visible in DebugView)
+// ============================================================
 namespace Log {
     void Info(const wchar_t* msg) {
         std::wstring formatted = L"[VelvetUI] ";
@@ -26,150 +41,170 @@ namespace Log {
         swprintf_s(buffer, L"[VelvetUI] %s: %s", msg, detail);
         OutputDebugStringW(buffer);
     }
+
+    void Hresult(const wchar_t* msg, HRESULT hr) {
+        wchar_t buffer[512];
+        swprintf_s(buffer, L"[VelvetUI] %s: 0x%08X", msg, static_cast<unsigned int>(hr));
+        OutputDebugStringW(buffer);
+    }
 }
 
 // ============================================================
-// Fase 1: Buscar ventanas de la barra de tareas
+// COM exports: DllGetClassObject / DllCanUnloadNow
+//
+// Use STDAPI to match the declarations in combaseapi.h.
+// The .def file ensures these are exported with correct names.
 // ============================================================
 
-struct TaskbarInfo {
-    HWND mainTaskbar = nullptr;       // Shell_TrayWnd
-    HWND secondaryTaskbar = nullptr;  // Shell_SecondaryTrayWnd
-    HWND rebarWindow = nullptr;       // ReBarWindow32
-    HWND taskSwClass = nullptr;       // MSTaskSwWClass
-};
-
-TaskbarInfo FindTaskbarWindows()
+_Use_decl_annotations_
+STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID* ppv) try
 {
-    TaskbarInfo info;
+    Log::Info(L"DllGetClassObject llamado");
 
-    // Barra principal
-    info.mainTaskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
-    if (info.mainTaskbar) {
-        Log::Info(L"Shell_TrayWnd encontrada", (DWORD)(UINT_PTR)info.mainTaskbar);
+    if (rclsid == CLSID_VelvetTAP) {
+        *ppv = nullptr;
+        return winrt::make<SimpleFactory<VelvetTAP>>().as(riid, ppv);
+    }
 
-        // Obtener dimensiones
-        RECT rect;
-        if (GetWindowRect(info.mainTaskbar, &rect)) {
-            wchar_t buf[256];
-            swprintf_s(buf, L"[VelvetUI]   Posicion: (%ld,%ld) - (%ld,%ld) | Tamano: %ldx%ld",
-                rect.left, rect.top, rect.right, rect.bottom,
-                rect.right - rect.left, rect.bottom - rect.top);
-            OutputDebugStringW(buf);
+    return CLASS_E_CLASSNOTAVAILABLE;
+}
+catch (...)
+{
+    return winrt::to_hresult();
+}
+
+_Use_decl_annotations_
+STDAPI DllCanUnloadNow(void)
+{
+    return winrt::get_module_lock() ? S_FALSE : S_OK;
+}
+
+// ============================================================
+// InitializeTAP - loads Windows.UI.Xaml.dll and calls
+// InitializeXamlDiagnosticsEx to kick off the TAP registration.
+// ============================================================
+
+using PFN_InitializeXamlDiagnosticsEx = decltype(&InitializeXamlDiagnosticsEx);
+
+static HRESULT GetCurrentModulePath(wchar_t* path, DWORD maxLen)
+{
+    HMODULE hModule = nullptr;
+    if (!GetModuleHandleExW(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+            GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCWSTR>(&GetCurrentModulePath),
+            &hModule))
+    {
+        return HRESULT_FROM_WIN32(GetLastError());
+    }
+
+    DWORD len = GetModuleFileNameW(hModule, path, maxLen);
+    if (len == 0 || len >= maxLen) {
+        return HRESULT_FROM_WIN32(GetLastError());
+    }
+
+    return S_OK;
+}
+
+static HRESULT InitializeTAP()
+{
+    wchar_t dllPath[MAX_PATH];
+    HRESULT hr = GetCurrentModulePath(dllPath, MAX_PATH);
+    if (FAILED(hr)) {
+        Log::Hresult(L"No se pudo obtener la ruta de velvet.dll", hr);
+        return hr;
+    }
+
+    Log::Info(L"Ruta de velvet.dll", dllPath);
+
+    HMODULE hXaml = LoadLibraryExW(
+        L"Windows.UI.Xaml.dll",
+        nullptr,
+        LOAD_LIBRARY_SEARCH_SYSTEM32);
+
+    if (!hXaml) {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        Log::Hresult(L"No se pudo cargar Windows.UI.Xaml.dll", hr);
+        return hr;
+    }
+
+    Log::Info(L"Windows.UI.Xaml.dll cargada OK");
+
+    auto pfnInit = reinterpret_cast<PFN_InitializeXamlDiagnosticsEx>(
+        GetProcAddress(hXaml, "InitializeXamlDiagnosticsEx"));
+
+    if (!pfnInit) {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        Log::Hresult(L"InitializeXamlDiagnosticsEx no encontrada", hr);
+        return hr;
+    }
+
+    // Retry with incrementing endpoint names.
+    // InitializeXamlDiagnosticsEx fails with ERROR_NOT_FOUND if the
+    // endpoint name is already taken or if XAML isn't ready yet.
+    // TranslucentTB 2025.1 uses this same approach.
+    hr = E_FAIL;
+    for (int i = 1; i <= 10 && FAILED(hr); ++i)
+    {
+        wchar_t endpoint[64];
+        swprintf_s(endpoint, L"VisualDiagConnection%d", i);
+
+        Log::Info(L"Intentando endpoint", endpoint);
+
+        hr = pfnInit(
+            endpoint,
+            GetCurrentProcessId(),
+            nullptr,
+            dllPath,
+            CLSID_VelvetTAP,
+            nullptr);
+
+        if (FAILED(hr)) {
+            Log::Hresult(endpoint, hr);
+            Sleep(500);
         }
-    } else {
-        Log::Info(L"Shell_TrayWnd NO encontrada");
     }
 
-    // Barra secundaria (multi-monitor)
-    info.secondaryTaskbar = FindWindowW(L"Shell_SecondaryTrayWnd", nullptr);
-    if (info.secondaryTaskbar) {
-        Log::Info(L"Shell_SecondaryTrayWnd encontrada (multi-monitor)");
+    if (FAILED(hr)) {
+        Log::Hresult(L"InitializeXamlDiagnosticsEx fallo tras 10 intentos", hr);
+        return hr;
     }
 
-    // Enumerar ventanas hijas de la barra principal
-    if (info.mainTaskbar) {
-        Log::Info(L"--- Ventanas hijas de Shell_TrayWnd ---");
-        
-        EnumChildWindows(info.mainTaskbar, [](HWND hwnd, LPARAM lParam) -> BOOL {
-            wchar_t className[256] = { 0 };
-            wchar_t windowText[256] = { 0 };
-            GetClassNameW(hwnd, className, 256);
-            GetWindowTextW(hwnd, windowText, 256);
-            
-            RECT rect;
-            GetWindowRect(hwnd, &rect);
-            
-            wchar_t buf[1024];
-            swprintf_s(buf, L"[VelvetUI]   HWND=%p | Class=%-30s | Text=%-20s | Rect=(%ld,%ld,%ld,%ld)",
-                hwnd, className, windowText,
-                rect.left, rect.top, rect.right, rect.bottom);
-            OutputDebugStringW(buf);
-            
-            return TRUE; // continuar enumerando
-        }, 0);
-        
-        Log::Info(L"--- Fin de ventanas hijas ---");
-    }
-
-    return info;
+    Log::Info(L"InitializeXamlDiagnosticsEx OK - esperando callbacks");
+    return S_OK;
 }
 
 // ============================================================
-// Fase 1: Intentar acceder a XAML Islands
-// Buscamos la ventana de tipo "Windows.UI.Xaml" que contiene
-// el visual tree XAML de la barra de tareas
+// Worker thread
 // ============================================================
-
-void FindXamlWindows()
+DWORD WINAPI VelvetWorker(LPVOID)
 {
-    Log::Info(L"=== Buscando ventanas XAML ===");
-    
-    EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
-        // Solo nos interesan las ventanas de nuestro proceso
-        DWORD pid;
-        GetWindowThreadProcessId(hwnd, &pid);
-        if (pid != GetCurrentProcessId()) return TRUE;
-        
-        wchar_t className[256] = { 0 };
-        GetClassNameW(hwnd, className, 256);
-        
-        // Buscar ventanas XAML relevantes
-        if (wcsstr(className, L"Xaml") || 
-            wcsstr(className, L"XAML") ||
-            wcsstr(className, L"Windows.UI") ||
-            wcsstr(className, L"Taskbar") ||
-            wcsstr(className, L"Shell_TrayWnd") ||
-            wcsstr(className, L"Shell_Secondary")) 
-        {
-            wchar_t windowText[256] = { 0 };
-            GetWindowTextW(hwnd, windowText, 256);
-            
-            RECT rect;
-            GetWindowRect(hwnd, &rect);
-            
-            wchar_t buf[1024];
-            swprintf_s(buf, L"[VelvetUI]   HWND=%p | Class=%-40s | Text=%-20s | Size=%ldx%ld",
-                hwnd, className, windowText,
-                rect.right - rect.left, rect.bottom - rect.top);
-            OutputDebugStringW(buf);
-        }
-        
-        return TRUE;
-    }, 0);
-    
-    Log::Info(L"=== Fin busqueda XAML ===");
-}
+    Sleep(1000);
 
-// ============================================================
-// Worker thread: ejecutamos la lógica en un thread separado
-// para no bloquear DllMain
-// ============================================================
+    Log::Info(L"=== VelvetUI Fase 2: Visual Tree Access ===");
 
-DWORD WINAPI VelvetWorker(LPVOID lpParam)
-{
-    // Esperar un poco para que explorer termine de inicializar
-    Sleep(500);
-    
-    Log::Info(L"=== VelvetUI Fase 1: Reconocimiento ===");
-    
-    // Paso 1: Encontrar la barra de tareas
-    TaskbarInfo taskbar = FindTaskbarWindows();
-    
-    // Paso 2: Buscar ventanas XAML
-    FindXamlWindows();
-    
-    Log::Info(L"=== Fin Fase 1 ===");
-    
+    HRESULT hr = InitializeTAP();
+    if (FAILED(hr)) {
+        Log::Hresult(L"InitializeTAP fallo", hr);
+        Log::Info(L"=== Fase 2 FALLIDA ===");
+        return 1;
+    }
+
+    Log::Info(L"=== Fase 2 inicializada OK ===");
+    Log::Info(L"Revisa DebugView para los eventos del Visual Tree");
+
+    while (true) {
+        Sleep(60000);
+    }
+
     return 0;
 }
 
 // ============================================================
 // DLL Entry Point
 // ============================================================
-
 HMODULE g_hModule = nullptr;
-HANDLE g_hWorkerThread = nullptr;
+HANDLE  g_hWorkerThread = nullptr;
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserved)
 {
@@ -180,13 +215,11 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserved)
         DisableThreadLibraryCalls(hModule);
         g_hModule = hModule;
 
-        DWORD pid = GetCurrentProcessId();
         Log::Info(L"=== VelvetUI payload cargada ===");
-        Log::Info(L"PID", pid);
+        Log::Info(L"PID", GetCurrentProcessId());
 
-        // Lanzar worker thread (no hacer trabajo pesado en DllMain)
-        g_hWorkerThread = CreateThread(nullptr, 0, VelvetWorker, nullptr, 0, nullptr);
-        
+        g_hWorkerThread = CreateThread(
+            nullptr, 0, VelvetWorker, nullptr, 0, nullptr);
         break;
     }
     case DLL_PROCESS_DETACH:
