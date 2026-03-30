@@ -4,6 +4,8 @@
 // Implements IVisualTreeServiceCallback2 to receive notifications
 // when XAML visual tree elements are added/removed.
 //
+// Fase 3: Integrates TaskbarModifier to apply styles on element add.
+//
 // Optimizations vs m417z gist:
 //   - Early type filtering: only processes relevant XAML types
 //   - Caches key element handles for later modification
@@ -13,6 +15,7 @@
 #pragma once
 
 #include "xaml_diagnostics.h"
+#include "taskbar_modifier.h"
 
 #include <winrt/base.h>
 #include <winrt/Windows.Foundation.h>
@@ -22,6 +25,7 @@
 #include <unordered_map>
 #include <string>
 #include <mutex>
+#include <memory>
 
 namespace wf  = winrt::Windows::Foundation;
 namespace wux = winrt::Windows::UI::Xaml;
@@ -59,6 +63,7 @@ struct VisualTreeWatcher : winrt::implements<VisualTreeWatcher,
     VisualTreeWatcher& operator=(VisualTreeWatcher&&)      = delete;
 
     void SetXamlDiagnostics(winrt::com_ptr<IXamlDiagnostics> diagnostics);
+    void SetTaskbarModifier(std::shared_ptr<Velvet::TaskbarModifier> modifier);
     const CachedElement* GetCachedElement(const std::wstring& name) const;
 
     ~VisualTreeWatcher();
@@ -90,6 +95,7 @@ private:
     void ProcessElementRemove(const VisualElement& element);
 
     winrt::com_ptr<IXamlDiagnostics>                m_diagnostics{ nullptr };
+    std::shared_ptr<Velvet::TaskbarModifier>        m_modifier;
     mutable std::mutex                              m_cacheMutex;
     std::unordered_map<std::wstring, CachedElement> m_elementCache;
 

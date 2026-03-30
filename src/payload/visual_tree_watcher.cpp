@@ -1,5 +1,6 @@
 // ============================================================
 // VelvetUI - VisualTreeWatcher implementation
+// Fase 3: calls TaskbarModifier on element add
 // ============================================================
 
 #include "visual_tree_watcher.h"
@@ -39,6 +40,15 @@ void VisualTreeWatcher::SetXamlDiagnostics(winrt::com_ptr<IXamlDiagnostics> diag
 }
 
 // ============================================================
+// SetTaskbarModifier
+// ============================================================
+void VisualTreeWatcher::SetTaskbarModifier(std::shared_ptr<Velvet::TaskbarModifier> modifier)
+{
+    m_modifier = std::move(modifier);
+    Log::Info(L"VisualTreeWatcher: TaskbarModifier asignado");
+}
+
+// ============================================================
 // Destructor
 // ============================================================
 VisualTreeWatcher::~VisualTreeWatcher()
@@ -50,10 +60,6 @@ VisualTreeWatcher::~VisualTreeWatcher()
 
 // ============================================================
 // IsRelevantType - early filter
-//
-// Checks if the XAML type name contains any of our target
-// substrings. This avoids calling FromHandle (which is an
-// expensive cross-apartment COM call) for types we don't need.
 // ============================================================
 bool VisualTreeWatcher::IsRelevantType(const wchar_t* typeName) const
 {
@@ -108,6 +114,7 @@ catch (...)
 //
 // When an element is added, try to resolve it as a
 // FrameworkElement and cache it if it has a name.
+// Then dispatch to TaskbarModifier for style application.
 // ============================================================
 void VisualTreeWatcher::ProcessElementAdd(const VisualElement& element)
 {
@@ -151,21 +158,32 @@ void VisualTreeWatcher::ProcessElementAdd(const VisualElement& element)
             fe.ActualHeight());
         Log::Info(buf);
 
-        // Cache elements that have a name (these are the ones we'll
-        // want to target in Phase 3 for style modification)
+        std::wstring nameStr(name);
+        std::wstring typeStr = element.Type ? element.Type : L"";
+
+        // Cache elements that have a name
         if (!name.empty()) {
-            std::lock_guard lock(m_cacheMutex);
-            CachedElement cached;
-            cached.handle  = element.Handle;
-            cached.type    = element.Type ? element.Type : L"";
-            cached.name    = std::wstring(name);
-            cached.element = fe;
+            {
+                std::lock_guard lock(m_cacheMutex);
+                CachedElement cached;
+                cached.handle  = element.Handle;
+                cached.type    = typeStr;
+                cached.name    = nameStr;
+                cached.element = fe;
 
-            m_elementCache[cached.name] = std::move(cached);
+                m_elementCache[cached.name] = std::move(cached);
 
-            swprintf_s(buf, L"    >> Cached: \"%s\" (total cached: %zu)",
-                name.c_str(), m_elementCache.size());
-            Log::Info(buf);
+                swprintf_s(buf, L"    >> Cached: \"%s\" (total cached: %zu)",
+                    name.c_str(), m_elementCache.size());
+                Log::Info(buf);
+            }
+        }
+
+        // Dispatch to TaskbarModifier for style application.
+        // Important: some of the parent hosts that constrain the taskbar height
+        // don't have a XAML name, so we must allow unnamed elements through.
+        if (m_modifier) {
+            m_modifier->OnElementDiscovered(typeStr, nameStr, fe);
         }
     }
     catch (const winrt::hresult_error& e) {
@@ -184,11 +202,16 @@ void VisualTreeWatcher::ProcessElementRemove(const VisualElement& element)
         element.Handle);
     Log::Info(buf);
 
-    // Remove from cache if present
+    // Remove from cache if present, and clear applied-state so the
+    // element can be re-styled if XAML recreates it after a relayout.
     std::lock_guard lock(m_cacheMutex);
     for (auto it = m_elementCache.begin(); it != m_elementCache.end(); ++it) {
         if (it->second.handle == element.Handle) {
             Log::Info(L"    >> Removed from cache", it->first.c_str());
+            if (m_modifier) {
+                std::wstring key = it->second.type + L"#" + it->second.name;
+                m_modifier->OnElementRemoved(key);
+            }
             m_elementCache.erase(it);
             break;
         }

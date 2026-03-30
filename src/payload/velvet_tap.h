@@ -6,15 +6,20 @@
 // creates a VelvetTAP instance and calls SetSite() with an
 // IVisualTreeService3 pointer. We use that to register our
 // VisualTreeWatcher for callbacks.
+//
+// Fase 3: Receives TaskbarModifier from dllmain and forwards
+// it to VisualTreeWatcher on SetSite.
 // ============================================================
 
 #pragma once
 
 #include "xaml_diagnostics.h"
 #include "visual_tree_watcher.h"
+#include "taskbar_modifier.h"
 
 #include <winrt/base.h>
 #include <ocidl.h>
+#include <memory>
 
 // {7A8B3C4D-1234-5678-9ABC-DEF012345678}
 // Unique CLSID for VelvetUI's TAP. Must match the CLSID passed
@@ -29,6 +34,9 @@ struct VelvetTAP : winrt::implements<VelvetTAP, IObjectWithSite, winrt::non_agil
     HRESULT STDMETHODCALLTYPE SetSite(IUnknown* pUnkSite) override;
     HRESULT STDMETHODCALLTYPE GetSite(REFIID riid, void** ppvSite) noexcept override;
 
+    // Called from DllGetClassObject to pass the modifier before SetSite fires
+    void SetTaskbarModifier(std::shared_ptr<Velvet::TaskbarModifier> modifier);
+
 private:
     template<typename T>
     static winrt::com_ptr<T> FromIUnknown(IUnknown* pSite)
@@ -38,6 +46,7 @@ private:
         return site.as<T>();
     }
 
-    winrt::com_ptr<IVisualTreeService3>  m_visualTreeService;
-    winrt::com_ptr<VisualTreeWatcher>    m_watcher;
+    winrt::com_ptr<IVisualTreeService3>          m_visualTreeService;
+    winrt::com_ptr<VisualTreeWatcher>            m_watcher;
+    std::shared_ptr<Velvet::TaskbarModifier>     m_modifier;
 };

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(VelvetUI
     VERSION 0.1.0
     DESCRIPTION "Windows 11 shell customization - Velvet ecosystem"
-    LANGUAGES CXX
+    LANGUAGES C CXX
 )
 
 # ============================================================

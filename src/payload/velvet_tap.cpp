@@ -1,8 +1,22 @@
 // ============================================================
 // VelvetUI - VelvetTAP implementation
+// Fase 3: Forwards TaskbarModifier to VisualTreeWatcher
 // ============================================================
 
 #include "velvet_tap.h"
+
+// Global TaskbarModifier created in VelvetWorker (dllmain.cpp).
+// Set before InitializeTAP, read-only after that.
+extern std::shared_ptr<Velvet::TaskbarModifier> g_modifier;
+
+// ============================================================
+// SetTaskbarModifier (kept for potential future use, but
+// SetSite now reads the global directly)
+// ============================================================
+void VelvetTAP::SetTaskbarModifier(std::shared_ptr<Velvet::TaskbarModifier> modifier)
+{
+    m_modifier = std::move(modifier);
+}
 
 // ============================================================
 // SetSite
@@ -43,6 +57,12 @@ HRESULT VelvetTAP::SetSite(IUnknown* pUnkSite) try
         if (!m_watcher) {
             m_watcher = winrt::make_self<VisualTreeWatcher>();
             Log::Info(L"VelvetTAP: VisualTreeWatcher creado");
+        }
+
+        // Pass the TaskbarModifier to the watcher (read from global)
+        auto& modifier = m_modifier ? m_modifier : g_modifier;
+        if (modifier) {
+            m_watcher->SetTaskbarModifier(modifier);
         }
 
         // Wire up diagnostics and register for callbacks

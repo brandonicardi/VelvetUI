@@ -1,0 +1,27 @@
+{
+  "floating": {
+    "enabled": true,
+    "marginHorizontal": 250,
+    "marginBottom": 22,
+    "cornerRadius": 16,
+    "padding": 10,
+    "taskbarHeight": 60,
+    "iconSize": 28,
+    "taskbarButtonWidth": 52
+  },
+  "glass": {
+    "enabled": true,
+    "blurAmount": 12,
+    "saturation": 1.8,
+    "tintColor": "#000000",
+    "tintOpacity": 0.08,
+    "noiseOpacity": 0.02,
+    "specularOpacity": 0.18,
+    "specularColor": "#FFFFFF"
+  },
+  "border": {
+    "enabled": true,
+    "thickness": 0.8,
+    "color": "auto"
+  }
+}
